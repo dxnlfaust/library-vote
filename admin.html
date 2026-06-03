@@ -14,7 +14,7 @@
 <div id="main"><p>Loading admin panel...</p></div>
 
 <hr>
-<p><small><a href="index.html">Community Preferential Voting</a></small></p>
+<p><small><a href="index.html">[library name] preferential voting</a></small></p>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase.js"></script>
@@ -49,7 +49,15 @@ async function load() {
   });
 
   if (bErr) {
-    main.innerHTML = '<p class="err">Access denied. Check your admin link.</p>';
+    const msg = (bErr.message || '').toLowerCase();
+    if (msg.includes('access denied')) {
+      // The function ran and the secret didn't match.
+      main.innerHTML = '<p class="err">Access denied. Check your admin link.</p>';
+    } else {
+      // Something else went wrong (e.g. the function is missing) — show it.
+      main.innerHTML = '<p class="err">Could not verify admin access: ' +
+        esc(bErr.message || JSON.stringify(bErr)) + '</p>';
+    }
     return;
   }
 
