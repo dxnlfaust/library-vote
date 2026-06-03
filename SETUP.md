@@ -21,7 +21,9 @@ Open **SQL Editor** in the Supabase dashboard, paste the entire block below, and
 click **Run**. It is idempotent enough to run on a fresh project.
 
 ```sql
--- Needed for SHA-256 hashing (digest()).
+-- Needed for SHA-256 hashing (digest()). Supabase usually puts extensions in the
+-- `extensions` schema, so the functions below set search_path = public, extensions
+-- to find digest() regardless of where pgcrypto lives.
 create extension if not exists pgcrypto;
 
 -- ---------- tables ----------
@@ -89,7 +91,7 @@ create policy ballots_select_when_closed on ballots
 create or replace function cast_ballot(
   p_vote_id uuid, p_voter_name text, p_preferences jsonb
 ) returns uuid
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 declare
   v votes%rowtype;
   new_id uuid;
@@ -117,7 +119,7 @@ end; $$;
 create or replace function close_vote(
   p_vote_id uuid, p_secret text
 ) returns boolean
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 declare expected text; supplied text;
 begin
   select admin_secret_hash into expected from votes where id = p_vote_id;
@@ -133,7 +135,7 @@ end; $$;
 create or replace function admin_get_ballots(
   p_vote_id uuid, p_secret text
 ) returns setof ballots
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 declare expected text; supplied text;
 begin
   select admin_secret_hash into expected from votes where id = p_vote_id;
