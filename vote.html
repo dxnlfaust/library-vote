@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Vote | Vote 🗳</title>
+<style>
+  body { font-family: serif; max-width: 700px; margin: auto; padding: 1em; }
+  .opt-row { margin: 0.4em 0; }
+  .err { color: #cc0000; }
+  table.ballot td { padding: 0.2em 0.5em; }
+</style>
+</head>
+<body>
+
+<div id="main"><p>Loading vote...</p></div>
+
+<hr>
+<p><small><a href="index.html">Community Preferential Voting</a></small></p>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase.js"></script>
+<script src="irv.js"></script>
+<script>
+const main = document.getElementById('main');
+const voteId = getParam('id');
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function fmtDeadline(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString();
+}
+
+async function load() {
+  if (!voteId) { main.innerHTML = '<p class="err">No vote id in the link.</p>'; return; }
+
+  const { data: vote, error } = await sb.from('votes')
+    .select('*').eq('id', voteId).single();
+
+  if (error || !vote) {
+    main.innerHTML = '<p class="err">Vote not found. Check your link and try again.</p>';
+    return;
+  }
+
+  const now = new Date();
+  const deadlinePassed = vote.deadline && new Date(vote.deadline) <= now;
+
+  if (vote.status === 'closed') {
+    await showResults(vote);
+  } else if (deadlinePassed) {
+    main.innerHTML = '<h1>' + esc(vote.title) + '</h1>' +
+      '<p><b>Voting has closed.</b></p>' +
+      '<p>Results will be published here once the organiser closes the vote.</p>';
+  } else {
+    showForm(vote);
+  }
+}
+
+function showForm(vote) {
+  let html = '<h1>' + esc(vote.title) + '</h1>';
+  if (vote.description) html += '<p>' + esc(vote.description) + '</p>';
+  html += '<p>Voting closes: ' +
+    (vote.deadline ? esc(fmtDeadline(vote.deadline)) : 'still open') + '</p>';
+  html += '<hr>';
+  html += '<p><label>Your name (required):<br><input type="text" id="voterName" size="30"></label></p>';
+  html += '<p>Rank the options below. Enter 1 for your first preference, 2 for second, ' +
+          'and so on. You do not need to rank all options. Leave blank to not rank an option.</p>';
+
+  const order = shuffle(vote.options);
+  html += '<table class="ballot">';
+  order.forEach((opt, i) => {
+    html += '<tr><td>' + esc(opt) + '</td><td>Preference: ' +
+      '<input type="number" min="1" step="1" class="pref" ' +
+      'data-option="' + esc(opt) + '" size="3" style="width:4em"></td></tr>';
+  });
+  html += '</table>';
+  html += '<p><button id="submitVote">Submit vote</button></p>';
+  html += '<p id="voteStatus" class="err"></p>';
+  main.innerHTML = html;
+
+  document.getElementById('submitVote').onclick = () => submitVote(vote);
+}
+
+async function submitVote(vote) {
+  const status = document.getElementById('voteStatus');
+  status.textContent = '';
+  const name = document.getElementById('voterName').value.trim();
+  if (!name) { status.textContent = 'Please enter your name.'; return; }
+
+  const inputs = Array.from(document.querySelectorAll('.pref'));
+  const prefs = [];
+  for (const inp of inputs) {
+    const raw = inp.value.trim();
+    if (raw === '') continue;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      status.textContent = 'Preferences must be positive whole numbers.';
+      return;
+    }
+    prefs.push({ option: inp.dataset.option, rank: n });
+  }
+
+  if (prefs.length === 0) { status.textContent = 'Rank at least one option.'; return; }
+
+  const ranks = prefs.map(p => p.rank);
+  if (new Set(ranks).size !== ranks.length) {
+    status.textContent = 'No duplicate preference numbers — each rank must be unique.';
+    return;
+  }
+
+  // Gap check: warn (but allow) if ranks are not 1..n continuous.
+  const sorted = ranks.slice().sort((a, b) => a - b);
+  let continuous = sorted[0] === 1;
+  for (let i = 1; i < sorted.length; i++) if (sorted[i] !== sorted[i - 1] + 1) continuous = false;
+  if (!continuous) {
+    const ok = confirm("You haven't ranked all options continuously. This is fine — " +
+      "your unranked options simply won't receive your preferences. Continue?");
+    if (!ok) return;
+  }
+
+  prefs.sort((a, b) => a.rank - b.rank);
+
+  const { error } = await sb.rpc('cast_ballot', {
+    p_vote_id: vote.id, p_voter_name: name, p_preferences: prefs
+  });
+
+  if (error) { status.textContent = 'Could not submit: ' + error.message; return; }
+
+  main.innerHTML =
+    '<h1>Thank you, ' + esc(name) + '. Your vote has been cast...</h1>' +
+    '<p>Results will be published here once voting closes.</p>' +
+    '<p><i>Note: submitting again will replace your previous vote IF you use the same ' +
+    'name.... otherwise, shame upon ye.</i></p>' +
+    '<p><a href="#" id="again">Vote again?</a></p>';
+  document.getElementById('again').onclick = (e) => { e.preventDefault(); showForm(vote); };
+}
+
+async function showResults(vote) {
+  // RLS allows public SELECT of ballots only when the vote is closed.
+  const { data: ballots, error } = await sb.from('ballots')
+    .select('voter_name, preferences, submitted_at')
+    .eq('vote_id', vote.id).eq('superseded', false);
+
+  let html = '<h1>' + esc(vote.title) + '</h1>';
+  if (vote.description) html += '<p>' + esc(vote.description) + '</p>';
+  html += '<p><b>Voting is now closed.</b></p><hr>';
+
+  if (error) {
+    html += '<p class="err">Could not load results: ' + esc(error.message) + '</p>';
+    main.innerHTML = html;
+    return;
+  }
+
+  const parsed = ballots.map(b => b.preferences);
+  const result = runIRV(parsed, vote.options, vote.threshold);
+  html += formatResultsHTML(result, { totalBallots: ballots.length, eligible: ballots.length });
+  main.innerHTML = html;
+}
+
+load();
+</script>
+
+</body>
+</html>

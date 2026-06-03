@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Vote | Create a Vote 🗳</title>
+<style>
+  /* The one concession to modern wide screens. Everything else is browser default. */
+  body { font-family: serif; max-width: 700px; margin: auto; padding: 1em; }
+  .opt-row { margin: 0.3em 0; }
+  .status { font-style: italic; }
+  .err { color: #cc0000; }
+</style>
+</head>
+<body>
+
+<h1>Community Preferential Voting</h1>
+<p>preferential vote machine</p>
+<p><a href="#how-it-works">wait, preferential vote???</a></p>
+
+<hr>
+
+<h2>Create a New Vote</h2>
+
+<form id="createForm" onsubmit="return false;">
+
+  <p>
+    <label><b>Vote title</b> (required)<br>
+    <input type="text" id="title" size="40" placeholder="sexiest member"></label>
+  </p>
+
+  <p>
+    <label><b>Description</b> (optional, shown to voters)<br>
+    <textarea id="description" rows="3" cols="50"></textarea></label>
+  </p>
+
+  <p>
+    <label><b>Win threshold (%)</b><br>
+    <input type="number" id="threshold" value="50" min="1" max="100"></label><br>
+    <small>A candidate must exceed this share of active votes to win. 50 means more than half.</small>
+  </p>
+
+  <p>
+    <label><b>Voting deadline</b> (optional)<br>
+    <input type="datetime-local" id="deadline"></label><br>
+    <small>If set, the vote auto-closes at this time and voters see a "Voting has closed" message.</small>
+  </p>
+
+  <hr>
+
+  <h3>Options</h3>
+
+  <h4>Option A — Import from a Google Sheet</h4>
+  <p><i>The Google Sheet must be set to "Anyone with the link can view".</i></p>
+  <p>
+    <label>Google Sheet URL<br>
+    <input type="text" id="sheetUrl" size="50"></label>
+  </p>
+  <p>
+    <label>Column header name (e.g. <tt>name</tt>)<br>
+    <input type="text" id="sheetCol" size="20"></label>
+  </p>
+  <p><button id="loadSheetBtn">Load options from sheet</button></p>
+  <p id="sheetStatus" class="status"></p>
+
+  <hr>
+
+  <h4>Option B — Enter options manually</h4>
+  <p>Both import and manual entry feed the same list. Edit freely before submitting.</p>
+  <div id="optionsList"></div>
+  <p><button id="addOptionBtn">Add another option</button></p>
+
+  <hr>
+
+  <p><button id="submitBtn"><b>Create vote &rarr;</b></button></p>
+  <p id="createStatus" class="status"></p>
+</form>
+
+<div id="result" style="display:none;">
+  <hr>
+  <h2>Vote created!</h2>
+
+  <p><b>Share this link with voters:</b><br>
+  <a id="voteLink" href="#"></a> &nbsp; <button onclick="copyText('voteLink')">Copy</button></p>
+
+  <p><b>Your private admin link (do not share):</b><br>
+  <a id="adminLink" href="#"></a> &nbsp; <button onclick="copyText('adminLink')">Copy</button></p>
+
+  <p><b>Keep your admin link safe — it cannot be recovered.</b></p>
+</div>
+
+<hr>
+
+<h2 id="how-it-works">How preferential voting works: AI Slop runneth:</h2>
+<p>When you vote, you rank the options in order of preference: 1 for your favourite,
+2 for your second choice, and so on. You don't have to rank all options.</p>
+<p>Counting works in rounds. In the first round, only everyone's first preference is
+counted. If one option has more than [threshold]% of the votes, it wins.</p>
+<p>If no option reaches the threshold, the option with the fewest votes is eliminated.
+The people who voted for that option have their vote transferred to their next
+preference. This repeats until one option wins.</p>
+<p>This means your vote is never "wasted" — if your favourite is knocked out, your
+support moves to your next choice automatically.</p>
+
+<hr>
+<p><small>Community Preferential Voting &middot; instant-runoff &middot; built like it's 2001.</small></p>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase.js"></script>
+<script>
+/* ---------- manual options list ---------- */
+const optionsList = document.getElementById('optionsList');
+
+function makeOptionRow(value) {
+  const row = document.createElement('div');
+  row.className = 'opt-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.size = 40;
+  input.className = 'opt-input';
+  input.value = value || '';
+  row.appendChild(input);
+  const rm = document.createElement('a');
+  rm.href = '#';
+  rm.textContent = '[Remove]';
+  rm.style.marginLeft = '0.5em';
+  rm.onclick = function (e) {
+    e.preventDefault();
+    row.remove();
+    refreshRemoveLinks();
+  };
+  row.appendChild(document.createTextNode(' '));
+  row.appendChild(rm);
+  return row;
+}
+
+function refreshRemoveLinks() {
+  const rows = optionsList.querySelectorAll('.opt-row');
+  rows.forEach(row => {
+    const link = row.querySelector('a');
+    // Only show [Remove] when there are more than 2 options.
+    link.style.display = rows.length > 2 ? '' : 'none';
+  });
+}
+
+function addOption(value) {
+  optionsList.appendChild(makeOptionRow(value));
+  refreshRemoveLinks();
+}
+
+function setOptions(values) {
+  optionsList.innerHTML = '';
+  values.forEach(v => addOption(v));
+  while (optionsList.querySelectorAll('.opt-row').length < 2) addOption('');
+  refreshRemoveLinks();
+}
+
+function getOptions() {
+  return Array.from(optionsList.querySelectorAll('.opt-input'))
+    .map(i => i.value.trim())
+    .filter(v => v.length > 0);
+}
+
+// Start with 3 inputs.
+addOption(''); addOption(''); addOption('');
+
+document.getElementById('addOptionBtn').onclick = () => addOption('');
+
+/* ---------- Google Sheet import ---------- */
+function sheetCsvUrl(url) {
+  const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!idMatch) return null;
+  const id = idMatch[1];
+  let gid = '0';
+  const gidMatch = url.match(/[#&?]gid=([0-9]+)/);
+  if (gidMatch) gid = gidMatch[1];
+  return 'https://docs.google.com/spreadsheets/d/' + id + '/export?format=csv&gid=' + gid;
+}
+
+// Minimal CSV parser (handles quoted fields, commas, escaped quotes, CRLF).
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c === '\r') { /* ignore */ }
+      else field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+document.getElementById('loadSheetBtn').onclick = async function () {
+  const status = document.getElementById('sheetStatus');
+  status.className = 'status';
+  const url = document.getElementById('sheetUrl').value.trim();
+  const col = document.getElementById('sheetCol').value.trim();
+  if (!url || !col) { status.textContent = 'Enter both a sheet URL and a column header name.'; return; }
+
+  const csvUrl = sheetCsvUrl(url);
+  if (!csvUrl) { status.className = 'status err'; status.textContent = 'That does not look like a Google Sheets URL.'; return; }
+
+  status.textContent = 'Loading...';
+  try {
+    const resp = await fetch(csvUrl);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const text = await resp.text();
+    const rows = parseCSV(text);
+    if (rows.length === 0) throw new Error('empty sheet');
+
+    const header = rows[0].map(h => h.trim().toLowerCase());
+    const idx = header.indexOf(col.toLowerCase());
+    if (idx === -1) {
+      status.className = 'status err';
+      status.textContent = 'Column "' + col + '" not found. Columns in the sheet: ' + rows[0].join(', ');
+      return;
+    }
+
+    const seen = new Set();
+    const values = [];
+    for (let r = 1; r < rows.length; r++) {
+      const v = (rows[r][idx] || '').trim();
+      if (v && !seen.has(v.toLowerCase())) { seen.add(v.toLowerCase()); values.push(v); }
+    }
+    if (values.length === 0) throw new Error('no non-empty values in that column');
+
+    setOptions(values);
+    status.textContent = 'Loaded ' + values.length + ' options from sheet. You may edit them below.';
+  } catch (err) {
+    status.className = 'status err';
+    status.textContent = 'Could not load the sheet: ' + err.message +
+      '. Check the URL, the sharing setting ("Anyone with the link can view"), and the column name.';
+  }
+};
+
+/* ---------- create vote ---------- */
+document.getElementById('submitBtn').onclick = async function () {
+  const status = document.getElementById('createStatus');
+  status.className = 'status';
+
+  const title = document.getElementById('title').value.trim();
+  const description = document.getElementById('description').value.trim();
+  const threshold = parseInt(document.getElementById('threshold').value, 10);
+  const deadlineRaw = document.getElementById('deadline').value;
+  const options = getOptions();
+
+  // Validation.
+  if (!title) { fail('Please enter a vote title.'); return; }
+  if (!(threshold >= 1 && threshold <= 100)) { fail('Threshold must be between 1 and 100.'); return; }
+  if (options.length < 2) { fail('Enter at least 2 non-empty options.'); return; }
+  const lower = options.map(o => o.toLowerCase());
+  if (new Set(lower).size !== lower.length) { fail('Duplicate option names are not allowed.'); return; }
+
+  function fail(msg) { status.className = 'status err'; status.textContent = msg; }
+
+  const secret = crypto.randomUUID();
+  const hash = await sha256Hex(secret);
+  const deadline = deadlineRaw ? new Date(deadlineRaw).toISOString() : null;
+
+  status.textContent = 'Creating...';
+  const { data, error } = await sb.from('votes').insert({
+    title, description: description || null, options,
+    threshold, deadline, admin_secret_hash: hash, status: 'open'
+  }).select('id').single();
+
+  if (error) { fail('Could not create the vote: ' + error.message); return; }
+
+  const base = siteBase();
+  const voteUrl = base + 'vote.html?id=' + data.id;
+  const adminUrl = base + 'admin.html?id=' + data.id + '&secret=' + secret;
+
+  const vl = document.getElementById('voteLink'); vl.href = voteUrl; vl.textContent = voteUrl;
+  const al = document.getElementById('adminLink'); al.href = adminUrl; al.textContent = adminUrl;
+  document.getElementById('createForm').style.display = 'none';
+  document.getElementById('result').style.display = '';
+  document.getElementById('result').scrollIntoView();
+};
+
+function copyText(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.textContent || el.href);
+}
+</script>
+
+</body>
+</html>

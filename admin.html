@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Vote | Admin 🗳</title>
+<style>
+  body { font-family: serif; max-width: 700px; margin: auto; padding: 1em; }
+  .err { color: #cc0000; }
+</style>
+</head>
+<body>
+
+<div id="main"><p>Loading admin panel...</p></div>
+
+<hr>
+<p><small><a href="index.html">Community Preferential Voting</a></small></p>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase.js"></script>
+<script src="irv.js"></script>
+<script>
+const main = document.getElementById('main');
+const voteId = getParam('id');
+const secret = getParam('secret');
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function load() {
+  if (!voteId || !secret) {
+    main.innerHTML = '<p class="err">Access denied. Check your admin link.</p>';
+    return;
+  }
+
+  const { data: vote, error } = await sb.from('votes')
+    .select('*').eq('id', voteId).single();
+
+  if (error || !vote) {
+    main.innerHTML = '<p class="err">Vote not found. Check your admin link.</p>';
+    return;
+  }
+
+  // admin_get_ballots verifies the secret server-side; a wrong secret raises an error.
+  const { data: ballots, error: bErr } = await sb.rpc('admin_get_ballots', {
+    p_vote_id: voteId, p_secret: secret
+  });
+
+  if (bErr) {
+    main.innerHTML = '<p class="err">Access denied. Check your admin link.</p>';
+    return;
+  }
+
+  const active = (ballots || []).filter(b => !b.superseded);
+
+  if (vote.status !== 'closed') {
+    renderOpen(vote, active);
+  } else {
+    renderClosed(vote, active);
+  }
+}
+
+function renderOpen(vote, active) {
+  const voteUrl = siteBase() + 'vote.html?id=' + vote.id;
+  let html = '<h1>' + esc(vote.title) + ' — Admin Panel</h1>';
+  html += '<p><b>Status: OPEN</b></p>';
+  html += '<p>Votes cast so far: ' + active.length + '</p>';
+  html += '<p>Voting link:<br><a id="vl" href="' + esc(voteUrl) + '">' + esc(voteUrl) + '</a> ' +
+          '&nbsp; <button onclick="copyVote()">Copy</button></p>';
+  html += '<hr>';
+  html += '<p><button id="closeBtn">Close vote and publish results</button></p>';
+  html += '<p><i>Warning: closing the vote is permanent. Results will immediately become ' +
+          'visible to everyone with the voter link.</i></p>';
+  html += '<p id="closeStatus" class="err"></p>';
+  main.innerHTML = html;
+
+  window.copyVote = () => navigator.clipboard.writeText(voteUrl);
+  document.getElementById('closeBtn').onclick = closeVote;
+}
+
+async function closeVote() {
+  const status = document.getElementById('closeStatus');
+  status.textContent = '';
+  if (!confirm('Close the vote and publish results? This cannot be undone.')) return;
+
+  const { data, error } = await sb.rpc('close_vote', {
+    p_vote_id: voteId, p_secret: secret
+  });
+  if (error || data === false) {
+    status.textContent = 'Could not close the vote: ' + (error ? error.message : 'access denied');
+    return;
+  }
+  load();
+}
+
+function renderClosed(vote, active) {
+  let html = '<h1>' + esc(vote.title) + ' — Admin Panel</h1>';
+  html += '<p><b>Status: CLOSED — results are public</b></p><hr>';
+
+  const parsed = active.map(b => b.preferences);
+  const result = runIRV(parsed, vote.options, vote.threshold);
+  html += formatResultsHTML(result, { totalBallots: active.length, eligible: active.length });
+
+  html += '<hr><p><button id="csvBtn">Download results as CSV</button></p>';
+  main.innerHTML = html;
+
+  document.getElementById('csvBtn').onclick = () => downloadCSV(vote, active);
+}
+
+function csvField(s) {
+  s = String(s == null ? '' : s);
+  if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function downloadCSV(vote, active) {
+  const lines = ['voter_name,submitted_at,ranked_ballot'];
+  active.forEach(b => {
+    const ballot = (b.preferences || [])
+      .slice().sort((a, c) => a.rank - c.rank)
+      .map(p => p.rank + '. ' + p.option).join(' | ');
+    lines.push([csvField(b.voter_name), csvField(b.submitted_at), csvField(ballot)].join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'results-' + vote.id + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+load();
+</script>
+
+</body>
+</html>
