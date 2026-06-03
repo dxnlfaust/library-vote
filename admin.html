@@ -35,7 +35,8 @@ async function load() {
   }
 
   const { data: vote, error } = await sb.from('votes')
-    .select('*').eq('id', voteId).single();
+    .select('id, title, description, options, threshold, deadline, status, created_at')
+    .eq('id', voteId).single();
 
   if (error || !vote) {
     main.innerHTML = '<p class="err">Vote not found. Check your admin link.</p>';

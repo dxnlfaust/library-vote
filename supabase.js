@@ -9,8 +9,8 @@
  *    all sensitive operations are guarded server-side by RLS + RPC functions.
  */
 
-const SUPABASE_URL = 'YOUR_SUPABASE_URL';       // e.g. https://abcdxyz.supabase.co
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+const SUPABASE_URL = 'https://ohizzpinopswugmktjcp.supabase.co';       // e.g. https://abcdxyz.supabase.co
+const SUPABASE_ANON_KEY = 'sb_publishable_7QU0K2AnJ78IWTDBhf3XHw_SkJUEHlB';
 
 // The Supabase CDN script exposes a global named `supabase`. Make our client `sb`.
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

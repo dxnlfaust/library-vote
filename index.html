@@ -10,13 +10,13 @@
   .opt-row { margin: 0.3em 0; }
   .status { font-style: italic; }
   .err { color: #cc0000; }
+  dialog { max-width: 600px; }
 </style>
 </head>
 <body>
 
-<h1>Community Preferential Voting</h1>
-<p>preferential vote machine</p>
-<p><a href="#how-it-works">wait, preferential vote???</a></p>
+<h1>[library name] preferential voting</h1>
+<p>preferential vote machine! <a href="#" id="howLink">preferential vote?</a></p>
 
 <hr>
 
@@ -89,25 +89,30 @@
   <p><b>Keep your admin link safe — it cannot be recovered.</b></p>
 </div>
 
-<hr>
-
-<h2 id="how-it-works">How preferential voting works: AI Slop runneth:</h2>
-<p>When you vote, you rank the options in order of preference: 1 for your favourite,
-2 for your second choice, and so on. You don't have to rank all options.</p>
-<p>Counting works in rounds. In the first round, only everyone's first preference is
-counted. If one option has more than [threshold]% of the votes, it wins.</p>
-<p>If no option reaches the threshold, the option with the fewest votes is eliminated.
-The people who voted for that option have their vote transferred to their next
-preference. This repeats until one option wins.</p>
-<p>This means your vote is never "wasted" — if your favourite is knocked out, your
-support moves to your next choice automatically.</p>
-
-<hr>
-<p><small>Community Preferential Voting &middot; instant-runoff &middot; built like it's 2001.</small></p>
+<dialog id="how-it-works">
+  <h2>How preferential voting works: AI Slop runneth:</h2>
+  <p>When you vote, you rank the options in order of preference: 1 for your favourite,
+  2 for your second choice, and so on. You don't have to rank all options.</p>
+  <p>Counting works in rounds. In the first round, only everyone's first preference is
+  counted. If one option has more than [threshold]% of the votes, it wins.</p>
+  <p>If no option reaches the threshold, the option with the fewest votes is eliminated.
+  The people who voted for that option have their vote transferred to their next
+  preference. This repeats until one option wins.</p>
+  <p>This means your vote is never "wasted" — if your favourite is knocked out, your
+  support moves to your next choice automatically.</p>
+  <hr>
+  <form method="dialog"><button type="submit">Close</button></form>
+</dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase.js"></script>
 <script>
+/* ---------- how-it-works popup ---------- */
+document.getElementById('howLink').onclick = function (e) {
+  e.preventDefault();
+  document.getElementById('how-it-works').showModal();
+};
+
 /* ---------- manual options list ---------- */
 const optionsList = document.getElementById('optionsList');
 
